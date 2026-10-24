@@ -1,52 +1,45 @@
 import os
+import logging
+import argparse
+import json
 import re
 import sys
 import time
-import zlib
 import base64
-import ctypes
-import winreg
-import tempfile
 import requests
 import datetime
-import netifaces
-import subprocess
 import image_base64
-import font_base64
 import urllib.parse
-import pystray
-from pystray import _win32 as pystray_win32
-from pystray._util import win32 as win32_const
 from io import BytesIO
 from PIL import Image, ImageTk
 import customtkinter as ctk
-from threading import Thread, current_thread
+from threading import Thread, Lock, Event
 from bs4 import BeautifulSoup
-from win32com.client import Dispatch
 
 
-WM_LBUTTONDBLCLK = 0x0203
+from ui_dispatch import UiDispatcher
 
-
-class DoubleClickWin32Icon(pystray_win32.Icon):
-    def _on_notify(self, wparam, lparam):
-        if lparam == WM_LBUTTONDBLCLK:
-            return super()._on_notify(wparam, win32_const.WM_LBUTTONUP)
-
-        if lparam == win32_const.WM_LBUTTONUP:
-            return
-
-        return super()._on_notify(wparam, lparam)
-
+if sys.platform == 'win32':
+    import platform_win as plat
+elif sys.platform.startswith('linux'):
+    import platform_linux as plat
+else:
+    raise RuntimeError('WiFi Request supports Windows and Linux desktops.')
 
 
 class MyApp:
-    def __init__(self, root):
-        
+    def __init__(self, root, *, start_network=True):
+
         self.version = '1.5.7'
-        
+
         self.root = root
-        
+        self.ui = UiDispatcher(root)
+        self.network_enabled = start_network
+        self.closing = False
+        self.worker_stop = Event()
+        self.login_lock = Lock()
+        self.tray_available = False
+
         self.internet_check_interval = 2        #(second), the time between two internet checks or login attempts
         self.login_interval = 600               #(second), time between two logins
         self.never_time = 60 * 60 * 24 * 7      #~1week, never pause relogin
@@ -72,7 +65,8 @@ class MyApp:
 
         self.load_data()
         self.init_window()
-        
+        self.root.bind('<Control-q>', lambda event: self.end_app())
+
 
         self.tray_thread = Thread(target=self.create_tray_icon, daemon=True)
         self.tray_thread.start()
@@ -84,56 +78,57 @@ class MyApp:
     def init_window(self):
         self.root.title("WiFi Request " + self.version)
         self.root.geometry("372x146")
-        
+
         ctk.set_default_color_theme("blue")
         self.root.resizable(False, False)
 
         self.remove_minimize_maximize()
         self.root._iconbitmap_method_called = True  # Prevents the icon from being overwritten by the default icon
-        root.tk.call("wm", "iconphoto", root._w, ImageTk.PhotoImage(data=base64.b64decode(image_base64.APP_ICON_BASE64)))
+        self.window_icon = ImageTk.PhotoImage(data=base64.b64decode(image_base64.APP_ICON_BASE64))
+        self.root.tk.call("wm", "iconphoto", self.root._w, self.window_icon)
         # self.root.attributes("-topmost", True)
         # self.on_closing()
 
-        self.info_frame = ctk.CTkFrame(root, border_color="blue",width=250,height=100)
+        self.info_frame = ctk.CTkFrame(self.root, border_color="blue",width=250,height=100)
         self.info_frame.place(x=15,y=15)
-        
+
         self.status_label = ctk.CTkLabel(
-            self.info_frame, 
-            width=150, height=10, 
-            font=("JetBrains Mono", 14, "bold"), 
-            justify="left", 
-            anchor="nw", text="", 
+            self.info_frame,
+            width=150, height=10,
+            font=("JetBrains Mono", 14, "bold"),
+            justify="left",
+            anchor="nw", text="",
             wraplength=380
         )
         self.status_label.grid(row=0, column=0, padx=10, pady=(10, 2), sticky="w")
 
         self.info_label = ctk.CTkLabel(
-            self.info_frame, 
-            width=150, height=89, 
-            font=("JetBrains Mono", 14, "bold"), 
-            justify="left", 
-            anchor="nw", text="", 
+            self.info_frame,
+            width=150, height=89,
+            font=("JetBrains Mono", 14, "bold"),
+            justify="left",
+            anchor="nw", text="",
             wraplength=380
         )
         self.info_label.grid(row=1, column=0, padx=10, pady=0, sticky="w")
-        
 
-        
-        self.control_frame = ctk.CTkFrame(root,width=300,height=50)
+
+
+        self.control_frame = ctk.CTkFrame(self.root,width=300,height=50)
         self.control_frame.place(x=200,y=15)
-        
+
         self.ip_frame = ctk.CTkFrame(self.control_frame, width=300,height=10, fg_color = "#2d7cbb",)
         self.ip_frame.grid(row=0, column=0, padx=7,pady=7, sticky="w")
         self.ip_label = ctk.CTkLabel(
             self.ip_frame,
-            width=131, height=13, 
-            font=("JetBrains Mono", 14, "bold"), 
+            width=131, height=13,
+            font=("JetBrains Mono", 14, "bold"),
             anchor="center",
             text="0.0.0.0",
             text_color="#dce4e4"
         )
         self.ip_label.grid(row=0, column=0, padx=7,pady=5, sticky="w")
-        
+
 
         self.internet_frame = ctk.CTkFrame(self.control_frame, width=300, height=10, fg_color = "#2d7cbb")
         self.internet_frame.grid(row=1, column=0, padx=7, pady=4, sticky="w")
