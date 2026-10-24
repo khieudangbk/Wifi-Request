@@ -344,135 +344,142 @@ class MyApp:
                     self.update_internet_status(False)
                     self.login_success_but_no_internet_handle(is_login_success)
                     continue
-                
+
                 self.current_times_error = 0
 
             self.is_internet_connected = True
             self.update_internet_status(True)
             if self.time_login is None:
                 self.time_login = datetime.datetime.now()
-            
+
             self.wait = self.internet_check_interval
-            
+
     def run_background(self):
         self.current_times_error = 0
         self.time_login = None
         self.wait = 0.0
         self.is_internet_connected = False
-        
+
         self.run_no_logout()
         #self.run_have_logout()
 
     def start_run_thread(self):
-        if not self.running:
+        if self.closing or not self.running or not self.network_enabled:
             return
-
         if self.run_thread is not None and self.run_thread.is_alive():
+            if self.worker_stop.is_set():
+                self.root.after(100, self.start_run_thread)
             return
-
+        self.worker_stop = Event()
         self.run_thread = Thread(target=self.run_background, daemon=True)
         self.run_thread.start()
 
     def login(self, is_logout=True):
+        # The automatic loop and Request button must not race portal sessions.
+        with self.login_lock:
+            if self.closing:
+                return False
+            return self._login(is_logout)
+
+    def _login(self, is_logout=True):
         try:
             ip = self.display_ip()
             if ip == '':
                 return False
-            
+
             if is_logout:
                 req = requests.get(f'http://{ip}/logout?', timeout = 2, allow_redirects=False)
                 print("Logout: " + str(req.status_code))
-            
+
         except requests.RequestException as e:
             print(f"Logout Request Exception: {e}")
             return False
         except Exception as e:
             print(f"Logout Exception: {e}")
             return False
-        
-        #time.sleep(0.5)
-        
-        session = requests.Session()
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Content-Type': 'application/x-www-form-urlencoded'
-        }
-        gateway_url = f"http://{ip}/login?r=1" # this ip address doesn't seem to be fixed
-    
-        try:
-            resp_dummy = session.get(gateway_url, headers=headers, timeout = 2)
-            
-            redirect_url = self.process_interstitial_html(resp_dummy.text)
-            if not redirect_url:
-                print('\n' + resp_dummy.text)
-                print("---> Không tìm thấy URL Redirect.")
-                return False
 
-            print(redirect_url)
+        #self.worker_stop.wait(0.5)
 
-        except Exception as e:
-            print(f"[-] Lỗi kết nối Router: {e}")
-            return False
-        
-        verify_url = "http://v1.awingconnect.vn/Home/VerifyUrl"
-        
-        session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Referer': redirect_url,
-            'X-Requested-With': 'XMLHttpRequest',
-            'Content-Type': 'application/json'
-        })
-
-        try:
-            resp_verify = session.post(verify_url, timeout = 2)
-            
-            data = None
-            try:
-                data = resp_verify.json()
-            except Exception as e:
-                print('\n' + resp_verify.text)
-                print(f"JSON Decode Exception: {e}")
-                return False
-
-            html_form = data['captiveContext']['contentAuthenForm']
-            real_action_url = re.search(r'action="([^"]+)"', html_form).group(1)
-            real_user = re.search(r'name="username" value="([^"]+)"', html_form).group(1)
-            real_pass = re.search(r'name="password" value="([^"]+)"', html_form).group(1)
-            
-            print(f"User: {real_user}")
-            print(f"Pass: {real_pass}")
-            print(f"Action: {real_action_url}")
-
-            final_payload = {
-                'username': real_user,
-                'password': real_pass,
-                'dst': 'http://v1.awingconnect.vn/Success',
-                'popup': 'false'
+        with requests.Session() as session:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Content-Type': 'application/x-www-form-urlencoded'
             }
+            gateway_url = f"http://{ip}/login?r=1" # this ip address doesn't seem to be fixed
 
-            session.headers.update({'Content-Type': 'application/x-www-form-urlencoded'})
-            final_resp = session.post(real_action_url, data=final_payload, timeout = 2)
+            try:
+                resp_dummy = session.get(gateway_url, headers=headers, timeout = 2)
 
-            if final_resp.status_code == 200 or final_resp.status_code == 302:
-                print("[SUCCESS] Đã đăng nhập thành công!: " + str(final_resp.status_code) + "\n")
-                return True
-            
-            print('\n' + final_resp.text)
-            print(f"[FAIL] Server phản hồi: {final_resp.status_code}\n")
-            return False
+                redirect_url = self.process_interstitial_html(resp_dummy.text)
+                if not redirect_url:
+                    print('\n' + resp_dummy.text)
+                    print("---> Không tìm thấy URL Redirect.")
+                    return False
 
-        except Exception as e:
-            print(f"Login Exception: {e}\n")
-            return False
-        
+                print(redirect_url)
+
+            except Exception as e:
+                print(f"[-] Lỗi kết nối Router: {e}")
+                return False
+
+            verify_url = "http://v1.awingconnect.vn/Home/VerifyUrl"
+
+            session.headers.update({
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Referer': redirect_url,
+                'X-Requested-With': 'XMLHttpRequest',
+                'Content-Type': 'application/json'
+            })
+
+            try:
+                resp_verify = session.post(verify_url, timeout = 2)
+
+                data = None
+                try:
+                    data = resp_verify.json()
+                except Exception as e:
+                    print('\n' + resp_verify.text)
+                    print(f"JSON Decode Exception: {e}")
+                    return False
+
+                html_form = data['captiveContext']['contentAuthenForm']
+                real_action_url = re.search(r'action="([^"]+)"', html_form).group(1)
+                real_user = re.search(r'name="username" value="([^"]+)"', html_form).group(1)
+                real_pass = re.search(r'name="password" value="([^"]+)"', html_form).group(1)
+
+                print(f"Action: {real_action_url}")
+
+                final_payload = {
+                    'username': real_user,
+                    'password': real_pass,
+                    'dst': 'http://v1.awingconnect.vn/Success',
+                    'popup': 'false'
+                }
+
+                session.headers.update({'Content-Type': 'application/x-www-form-urlencoded'})
+                final_resp = session.post(real_action_url, data=final_payload, timeout = 2)
+
+                if final_resp.status_code == 200 or final_resp.status_code == 302:
+                    print("[SUCCESS] Đã đăng nhập thành công!: " + str(final_resp.status_code) + "\n")
+                    return True
+
+                print('\n' + final_resp.text)
+                print(f"[FAIL] Server phản hồi: {final_resp.status_code}\n")
+                return False
+
+            except Exception as e:
+                print(f"Login Exception: {e}\n")
+                return False
+
+
     def process_interstitial_html(self, html):
         soup = BeautifulSoup(html, 'html.parser')
         form = soup.find('form', id='authForm')
-        
+
         if not form:
             print("Lỗi: Không tìm thấy form authForm trong HTML")
             return None
-        
+
         id_mapping = {
             'serial': 'serial',
             'client_mac': 'client_mac',
@@ -482,7 +489,7 @@ class MyApp:
             'chap-id': 'chap_id',
             'chap-challenge': 'chap_challenge'
         }
-        
+
         params = {}
         for html_id, url_param_name in id_mapping.items():
             input_tag = form.find('input', id=html_id)
@@ -491,83 +498,60 @@ class MyApp:
                 params[url_param_name] = value
 
         base_url = "http://v1.awingconnect.vn/login"
-        
+
         query_string = urllib.parse.urlencode(params)
         final_url = f"{base_url}?{query_string}"
-        
+
         return final_url
 
-    # def check_internet(self):
-    #     try:
-    #         result = subprocess.run(['ping', '-n', '1', '-l', '1', '203.162.4.191'],timeout = 1, 
-    #                                 stdout = subprocess.PIPE,
-    #                                 stderr = subprocess.PIPE, 
-    #                                 creationflags = subprocess.CREATE_NO_WINDOW).stdout.decode('utf-8')
-    #     except subprocess.TimeoutExpired:
-    #         print("Ping Timeout")
-    #         return False
-        
-    #     if 'time' in result:
-    #         return True
-    #     return False
-    
     def check_internet(self):
         try:
-            result = subprocess.run(['curl', '-I', 'http://115.79.4.48/'],timeout = 1, 
-                                    stdout = subprocess.PIPE,
-                                    stderr = subprocess.PIPE, 
-                                    creationflags = subprocess.CREATE_NO_WINDOW).stdout.decode('utf-8')
-        except subprocess.TimeoutExpired:
-            print("Curl Timeout")
+            with requests.head('http://115.79.4.48/', timeout=1, allow_redirects=False) as response:
+                location = response.headers.get('Location', '')
+                if 'dst' in location.lower():
+                    return False
+                # Preserve the original header-based probe on both platforms.
+                # A portal response redirects with a dst parameter.
+                return 'dst' not in location.lower()
+        except requests.RequestException:
             return False
-        
-        #print(result)
-        
-        if result == "":
-            return False
-    
-        if 'dst' in result:
-            return False
-        return True
-    
+
     def display_ip(self):
         ip = self.get_router_ip()
         if ip == '':
-            self.ip_label.configure(text = '0.0.0.0')
+            self.configure_widget(self.ip_label, text = '0.0.0.0')
             return ''
-        
-        self.ip_label.configure(text = ip)
+
+        self.configure_widget(self.ip_label, text = ip)
         return ip
 
     def get_router_ip(self):
-        router_ip = ''
-        gateways = netifaces.gateways()
-        default_gateway = gateways.get('default')
-        if default_gateway and netifaces.AF_INET in default_gateway:
-            router_ip = default_gateway[netifaces.AF_INET][0]
-        return router_ip
+        return plat.get_router_ip()
 
     def create_tray_icon(self):
-        tray_image = self.get_pil_image_from_base64(image_base64.APP_ICON_BASE64)
-        if tray_image is None:
-            return
-
-        menu = pystray.Menu(
-            pystray.MenuItem('Toggle window', self.on_tray_toggle_window, default=True, visible=False),
-            pystray.MenuItem('Show', self.on_tray_show),
-            pystray.MenuItem(self.get_pause_menu_label, self.on_tray_toggle_pause),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem('Exit', self.on_tray_exit)
-        )
-
-        self.tray_icon = DoubleClickWin32Icon("wifi_request", tray_image, f"WiFi Request {self.version}", menu)
-        self.tray_icon.run()
+        try:
+            image = self.get_pil_image_from_base64(image_base64.APP_ICON_BASE64)
+            if image is None:
+                raise RuntimeError('Invalid embedded tray icon')
+            self.tray_icon = plat.make_tray_icon(
+                'wifi_request', image, f'WiFi Request {self.version}',
+                {'show': self.on_tray_show, 'toggle': self.on_tray_toggle_window,
+                 'pause': self.on_tray_toggle_pause, 'pause_label': self.get_pause_menu_label,
+                 'exit': self.on_tray_exit})
+            self.tray_available = True
+            if self.closing:
+                return
+            self.tray_icon.run()
+        except Exception:
+            logging.exception('Tray unavailable; keep the application accessible in the taskbar')
+            self.tray_available = False
+            self.ui.post(self.show_window)
 
     def on_tray_show(self, icon, item):
-        self.root.after(0, self.show_window)
+        self.ui.post(self.show_window)
 
     def on_tray_toggle_window(self, icon, item):
-        self.root.after(0, self.toggle_window_visibility)
+        self.ui.post(self.toggle_window_visibility)
 
     def toggle_window_visibility(self):
         if self.root.winfo_viewable():
@@ -576,12 +560,13 @@ class MyApp:
             self.show_window()
 
     def on_tray_toggle_pause(self, icon, item):
+        self.ui.post(self.toggle_pause)
+
+    def toggle_pause(self):
         if self.running:
             self.pause_app()
         else:
             self.resume_app()
-
-        self.refresh_tray_menu()
 
     def get_pause_menu_label(self, item):
         if self.running:
@@ -596,18 +581,17 @@ class MyApp:
                 pass
 
     def on_tray_exit(self, icon, item):
-        self.end_app()
+        self.ui.post(self.end_app)
 
     def pause_app(self):
         self.running = False
         self.wait = 0
 
-        if self.run_thread is not None and self.run_thread.is_alive() and self.run_thread != current_thread():
-            self.run_thread.join(timeout=3)
+        self.worker_stop.set()
 
         self.refresh_tray_menu()
-        self.root.after(0, lambda: self.status_label.configure(text="Status: Pause", text_color="yellow"))
-        self.root.after(0, lambda: self.info_label.configure(text=f"TimePause: {time.strftime('%H:%M')}"))
+        self.ui.post(lambda: self.configure_widget(self.status_label, text="Status: Pause", text_color="yellow"))
+        self.ui.post(lambda: self.configure_widget(self.info_label, text=f"TimePause: {time.strftime('%H:%M')}"))
         self.update_internet_status(None)
 
     def resume_app(self):
