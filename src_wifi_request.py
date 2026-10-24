@@ -141,23 +141,23 @@ class MyApp:
             text_color="#ffffff"
         )
         self.internet_label.grid(row=0, column=0, padx=7, pady=5, sticky="w")
-        
+
 
         self.button = ctk.CTkButton(
             self.control_frame,
             width = 146,
             text=self.button_default_text,
-            command=self.login_by_button, 
+            command=self.login_by_button,
             font=("JetBrains Mono", 14, "bold"),
             fg_color = "#2d7cbb"
         )
         self.button.grid(row=2, column=0, padx=7,pady=7, sticky="w")
-        
-        
-        
+
+
+
     def login_by_button(self):
-        self.status_label.configure(text="Logging in......", text_color = "white")
-        self.info_label.configure(text="")
+        self.configure_widget(self.status_label, text="Logging in......", text_color = "white")
+        self.configure_widget(self.info_label, text="")
         self.update_internet_status(None)
         self.start_button_spinner()
         Thread(target=self.login_by_button_worker, daemon=True).start()
@@ -168,20 +168,20 @@ class MyApp:
         self.start_run_thread()
         self.refresh_tray_menu()
 
+    def configure_widget(self, widget, **options):
+        self.ui.post(widget.configure, **options)
+
     def login_by_button_worker(self):
         try:
             self.login(is_logout=False)
         finally:
-            try:
-                self.root.after(0, self.stop_button_spinner)
-            except Exception:
-                pass
+            self.ui.post(self.stop_button_spinner)
 
     def spin_button(self):
         if not self.button_is_spinning:
             return
 
-        self.button.configure(text=self.button_spinner_frames[self.button_spinner_index])
+        self.configure_widget(self.button, text=self.button_spinner_frames[self.button_spinner_index])
         self.button_spinner_index = (self.button_spinner_index + 1) % len(self.button_spinner_frames)
         self.button_spin_job = self.root.after(120, self.spin_button)
 
@@ -191,7 +191,7 @@ class MyApp:
 
         self.button_is_spinning = True
         self.button_spinner_index = 0
-        self.button.configure(state="disabled")
+        self.configure_widget(self.button, state="disabled")
         self.spin_button()
 
     def stop_button_spinner(self):
@@ -200,27 +200,27 @@ class MyApp:
             self.root.after_cancel(self.button_spin_job)
             self.button_spin_job = None
 
-        self.button.configure(text=self.button_default_text, state="normal")
-        
-    
+        self.configure_widget(self.button, text=self.button_default_text, state="normal")
+
+
     def display_login_info(self):
         if self.time_login == None:
             return
-        self.status_label.configure(text="Status: Running", text_color = "green")
+        self.configure_widget(self.status_label, text="Status: Running", text_color = "green")
         elapsed = int((datetime.datetime.now() - self.time_login).total_seconds())
-        self.info_label.configure(text = f"TimeLogin: {self.time_login.strftime('%H:%M')}\n"f"TimeUsage: {elapsed//60:02d}:{elapsed%60:02d}")
+        self.configure_widget(self.info_label, text = f"TimeLogin: {self.time_login.strftime('%H:%M')}\n"f"TimeUsage: {elapsed//60:02d}:{elapsed%60:02d}")
 
     def update_internet_status(self, is_connected):
         def _update():
             if is_connected is True:
-                self.internet_label.configure(text="Internet: YES", text_color="#00ff88")
+                self.configure_widget(self.internet_label, text="Internet: YES", text_color="#00ff88")
             elif is_connected is False:
-                self.internet_label.configure(text="Internet: NO", text_color="#ff6b6b")
+                self.configure_widget(self.internet_label, text="Internet: NO", text_color="#ff6b6b")
             else:
-                self.internet_label.configure(text="Internet: ...", text_color="#dce4e4")
+                self.configure_widget(self.internet_label, text="Internet: ...", text_color="#dce4e4")
 
         try:
-            self.root.after(0, _update)
+            self.ui.post(_update)
         except Exception:
             pass
 
@@ -229,65 +229,65 @@ class MyApp:
         self.update_internet_status(False)
         if self.current_times_error >= int(self.login_retry_duration/self.internet_check_interval):
             self.running = False
-            self.status_label.configure(text="Status: Pause", text_color = "yellow")
-            self.info_label.configure(text=f"TimePause: {time.strftime('%H:%M')}")
+            self.configure_widget(self.status_label, text="Status: Pause", text_color = "yellow")
+            self.configure_widget(self.info_label, text=f"TimePause: {time.strftime('%H:%M')}")
             self.refresh_tray_menu()
             print("\n-----App paused.-----\n")
             return
 
         # handle error
         self.current_times_error += 1
-        self.status_label.configure(text="Status: Error", text_color = "red")
+        self.configure_widget(self.status_label, text="Status: Error", text_color = "red")
         if self.login_retry_duration == self.never_time:
-            self.info_label.configure(text=f"Attempt: {self.current_times_error}")
+            self.configure_widget(self.info_label, text=f"Attempt: {self.current_times_error}")
         else:
-            self.info_label.configure(text=f"Attempt: {self.current_times_error}/{int(self.login_retry_duration/self.internet_check_interval)}")
+            self.configure_widget(self.info_label, text=f"Attempt: {self.current_times_error}/{int(self.login_retry_duration/self.internet_check_interval)}")
 
         self.wait = self.internet_check_interval
-        
-        
+
+
     def login_success_but_no_internet_handle(self, is_login_success):
         if is_login_success:
-            self.status_label.configure(text="Status: Error", text_color = "red")
-            self.info_label.configure(text="Login success but\nno internet!\nChecking...")
-            time.sleep(3)
-            
+            self.configure_widget(self.status_label, text="Status: Error", text_color = "red")
+            self.configure_widget(self.info_label, text="Login success but\nno internet!\nChecking...")
+            self.worker_stop.wait(3)
+
             # check internet again
             attempt = 0
             max_attempts = 15
-            while not self.check_internet() and attempt < max_attempts:
-                self.info_label.configure(text="Login success but\nno internet!\nChecking...\nAttempt: " + str(attempt + 1) + "/" + str(max_attempts))
-                time.sleep(0.2)
+            while not self.worker_stop.is_set() and attempt < max_attempts and not self.check_internet():
+                self.configure_widget(self.info_label, text="Login success but\nno internet!\nChecking...\nAttempt: " + str(attempt + 1) + "/" + str(max_attempts))
+                self.worker_stop.wait(0.2)
                 attempt += 1
-                
+
             if self.check_internet():
                 self.is_internet_connected = True
                 self.update_internet_status(True)
                 self.wait = self.internet_check_interval
                 return
-                
+
             self.is_internet_connected = False
             self.update_internet_status(False)
-            self.status_label.configure(text="Status: Error", text_color = "red")
-            self.info_label.configure(text="Login success but\nno internet!\nRe-login")
-            
+            self.configure_widget(self.status_label, text="Status: Error", text_color = "red")
+            self.configure_widget(self.info_label, text="Login success but\nno internet!\nRe-login")
+
         self.time_login = None
 
     def run_have_logout(self):
-        while self.running:
-            
+        while self.running and not self.worker_stop.is_set():
+
             if self.wait > 0:
                 if self.is_internet_connected:
                     self.display_login_info()
                 self.wait -= 0.5
-                time.sleep(0.5)
+                self.worker_stop.wait(0.5)
                 continue
-                
-      
+
+
             is_login_success = False
             if self.time_login == None or (datetime.datetime.now() - self.time_login).total_seconds() >= self.login_interval:
                 self.is_internet_connected = False
-                
+
                 if self.login():
                     # successful login
                     is_login_success = True
@@ -305,34 +305,34 @@ class MyApp:
                 self.update_internet_status(False)
                 self.login_success_but_no_internet_handle(is_login_success)
                 continue
-            
+
             self.is_internet_connected = True
             self.update_internet_status(True)
-            
+
             self.wait = self.internet_check_interval
-        
+
     def run_no_logout(self):
         self.display_ip()
-        
-        while self.running:
+
+        while self.running and not self.worker_stop.is_set():
             if self.wait > 0:
                 if self.is_internet_connected:
                     self.display_login_info()
                 self.wait -= 0.5
-                time.sleep(0.5)
+                self.worker_stop.wait(0.5)
                 continue
-                
+
             is_login_success = False
             if not self.check_internet():
                 self.is_internet_connected = False
                 self.update_internet_status(False)
-                
+
                 if self.login(False):
                     # successful login
                     is_login_success = True
                     self.time_login = datetime.datetime.now()
                     self.current_times_error = 0
-                    
+
                 else:
                     # pause
                     self.error_login_handle()
