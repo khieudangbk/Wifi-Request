@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=WiFi Request
+Comment=Automatically reconnect dormitory Wi-Fi
+Exec=wifi_request
+Icon=wifi-request
+Terminal=false
+Categories=Network;
+StartupNotify=false
+StartupWMClass=Wifirequest
