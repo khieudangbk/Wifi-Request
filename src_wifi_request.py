@@ -602,140 +602,108 @@ class MyApp:
         self.start_run_thread()
         self.refresh_tray_menu()
         self.update_internet_status(None)
-        self.root.after(0, lambda: self.status_label.configure(text="Status: Running", text_color="green"))
-        self.root.after(0, lambda: self.info_label.configure(text="Resuming..."))
+        self.ui.post(lambda: self.configure_widget(self.status_label, text="Status: Running", text_color="green"))
+        self.ui.post(lambda: self.configure_widget(self.info_label, text="Resuming..."))
 
     def remove_minimize_maximize(self):
-        hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
-        style = ctypes.windll.user32.GetWindowLongW(hwnd, -16)
-        style = style & ~0x00020000  # WS_MINIMIZEBOX
-        style = style & ~0x00010000  # WS_MAXIMIZEBOX
-        ctypes.windll.user32.SetWindowLongW(hwnd, -16, style)
-        ctypes.windll.user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0002 | 0x0001 | 0x0020 | 0x0004)
+        plat.strip_window_buttons(self.root)
 
     def show_window(self):
-        self.root.deiconify()
+        if not self.closing:
+            self.root.deiconify()
+            self.root.lift()
+
     def on_closing(self):
-        self.root.withdraw()
+        if self.tray_available:
+            self.root.withdraw()
+        else:
+            self.root.iconify()
+
     def end_app(self):
+        if self.closing:
+            return
+        self.closing = True
         self.running = False
-
-        try:
-            self.root.after(0, self.on_closing)
-        except Exception:
-            pass
-
+        self.worker_stop.set()
+        self.stop_button_spinner()
+        self.ui.close()
         if self.tray_icon is not None:
             try:
                 self.tray_icon.stop()
             except Exception:
-                pass
-
-        if self.run_thread is not None and self.run_thread.is_alive() and self.run_thread != current_thread():
-            self.run_thread.join(timeout=2)
-
-        try:
-            self.root.after(0, self.root.quit)
-        except Exception:
-            pass
-        
+                logging.exception('Could not stop tray icon')
+        self.root.destroy()
 
     def load_data(self):
         # Mặc định: internet_check_interval = 2s, login_retry_duration = never_time (nv)
         pass
 
     def save_winreg_variables(self, name, value):
-        key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, "Software\\WiFiRequest")
-        if type(value) is str:
-            winreg.SetValueEx(key, name, 0, winreg.REG_SZ, value)
-        else:
-            winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, value)
-        winreg.CloseKey(key)
+        # Kept as compatibility wrappers; Linux delegates to XDG JSON settings.
+        plat.save_setting(name, value)
 
     def get_winreg_variables(self, name):
-        try:
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Software\\WiFiRequest")
-            value = winreg.QueryValueEx(key, name)[0]
-            winreg.CloseKey(key)
-            return value
-        except FileNotFoundError:
-            return None
-    
-    
+        return plat.get_setting(name)
+
     def get_pil_image_from_base64(self, data_base64):
         try:
             image_data = base64.b64decode(data_base64)
             return Image.open(BytesIO(image_data)).convert("RGBA")
         except Exception:
             return None
-        
-
-def add_to_startup_folder(app_name="request"):
-    try:
-        file_path = os.path.abspath(sys.argv[0])
-        file_path = file_path[0].upper() + file_path[1:]
-        startup_folder = os.path.join(
-            os.getenv('APPDATA'),
-            r"Microsoft\Windows\Start Menu\Programs\Startup"
-        )
-
-        shortcut_path = os.path.join(startup_folder, f"{app_name}.lnk")
-        shell = Dispatch('WScript.Shell')
-
-        if os.path.exists(shortcut_path):
-            shortcut = shell.CreateShortcut(shortcut_path)
-            if shortcut.TargetPath != file_path:
-                print(shortcut.TargetPath)
-                print(file_path)
-                shortcut.TargetPath = file_path
-                shortcut.WorkingDirectory = os.path.dirname(file_path)
-                shortcut.Save()
-
-        else:
-            shortcut = shell.CreateShortcut(shortcut_path)
-            shortcut.TargetPath = file_path
-            shortcut.WorkingDirectory = os.path.dirname(file_path)
-            shortcut.Save()
-
-    except Exception as e:
-        pass
-
-def load_embedded_font():
-    try:
-        temp_dir = os.path.join(tempfile.gettempdir(), "WiFiRequestFont")
-        os.makedirs(temp_dir, exist_ok=True)
-        font_path = os.path.join(temp_dir, "JetBrainsMono-Bold.ttf")
-
-        if not os.path.exists(font_path) or os.path.getsize(font_path) == 0:
-            font_data = zlib.decompress(base64.b64decode(font_base64.FONT_JETBRAINS_MONO_BOLD))
-            with open(font_path, "wb") as f:
-                f.write(font_data)
-
-        # 0x10 = FR_PRIVATE: Nạp font riêng cho tiến trình này, tự giải phóng khi tắt app
-        ctypes.windll.gdi32.AddFontResourceExW(font_path, 0x10, 0)
-    except Exception as e:
-        print(f"Font loading error: {e}")
 
 
-def check_single_instance():
-    ctypes.windll.kernel32.CreateMutexW(None, False, "Global\\RequestAppMutex")
-    if ctypes.GetLastError() == 183:
-        # MB_OK (0x0) | MB_ICONINFORMATION (0x40) | MB_TOPMOST (0x40000)
-        ctypes.windll.user32.MessageBoxW(
-            None,
-            "Ứng dụng đang chạy nền. Vui lòng nhấp vào icon ở khay hệ thống để mở lại.",
-            "WiFi Request",
-            0x00000040 | 0x00040000
-        )
-        sys.exit(0)
-
-
-if __name__ == "__main__":
-    check_single_instance()
-    load_embedded_font()
-    
-    root = ctk.CTk()
-    app = MyApp(root)
-    root.protocol("WM_DELETE_WINDOW", app.on_closing)
-    add_to_startup_folder()
+def main():
+    parser = argparse.ArgumentParser(description='WiFi Request for Windows and Linux desktops')
+    parser.add_argument('--smoke-test', action='store_true',
+                        help='Check GUI/font/tray and exit; no network or autostart changes')
+    args = parser.parse_args()
+    if not plat.check_single_instance():
+        from tkinter import messagebox
+        try:
+            messagebox.showinfo('WiFi Request', 'Ứng dụng đang chạy. Mở lại từ khay hệ thống hoặc thanh tác vụ.')
+        except Exception:
+            print('WiFi Request is already running.', file=sys.stderr)
+        return 0
+    plat.load_embedded_font()
+    root = ctk.CTk(className='WiFiRequest')
+    app = MyApp(root, start_network=not args.smoke_test)
+    root.protocol('WM_DELETE_WINDOW', app.on_closing)
+    result = {'ok': True}
+    if args.smoke_test:
+        def finish_smoke():
+            import tkinter.font
+            try:
+                checks = {
+                    'font': 'JetBrains Mono' in tkinter.font.families(root),
+                    'tray': app.tray_available and bool(app.tray_icon.visible),
+                    'window': root.winfo_exists() == 1,
+                    'network_disabled': not app.network_enabled,
+                }
+                app.on_closing()
+                checks['hide_to_tray'] = root.state() == 'withdrawn'
+                app.show_window()
+                checks['show'] = root.state() == 'normal'
+                app.pause_app()
+                checks['pause'] = not app.running
+                app.resume_app()
+                checks['resume'] = app.running
+                result['ok'] = all(checks.values())
+                print(json.dumps({'ok': result['ok'], 'checks': checks}), flush=True)
+            except Exception:
+                result['ok'] = False
+                logging.exception('Desktop smoke test failed')
+            finally:
+                app.end_app()
+        root.after(2000, finish_smoke)
+    else:
+        try:
+            plat.add_to_startup()
+        except Exception:
+            logging.exception('Could not register autostart; app will continue for this session')
     root.mainloop()
+    return 0 if result['ok'] else 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
