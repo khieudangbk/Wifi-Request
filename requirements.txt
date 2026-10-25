@@ -1,8 +1,9 @@
 beautifulsoup4
 customtkinter
-netifaces
 Pillow
 pystray
-pywin32
 requests
-pyinstaller
+pywin32; sys_platform == "win32"
+netifaces; sys_platform == "win32"
+pyinstaller>=6.16; python_version >= "3.14"
+pyinstaller; python_version < "3.14"
