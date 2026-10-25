@@ -4,7 +4,7 @@ VSVersionInfo(
     filevers=(1, 5, 7, 0),
     prodvers=(1, 5, 7, 0),
     mask=0x3f,
-    flags=0x0, 
+    flags=0x0,
     OS=0x4,
     fileType=0x1,
     subtype=0x0,
@@ -18,12 +18,12 @@ VSVersionInfo(
         [
          StringStruct(u'FileVersion', u'v1.5.7'),
          StringStruct(u'ProductVersion', u'v1.5.7'),
-         StringStruct(u'CompanyName', u'https://github.com/nndai'),
+         StringStruct(u'CompanyName', u'https://github.com/khieudangbk'),
          StringStruct(u'ProductName', u'WiFi Request'),
          StringStruct(u'FileDescription', u'WiFi Request'),
-         StringStruct(u'LegalCopyright', u'https://github.com/nndai/wifi-request'),
+         StringStruct(u'LegalCopyright', u'https://github.com/khieudangbk/wifi-request'),
          StringStruct(u'OriginalFilename', u'wifi_request.exe'),
-         StringStruct(u'AuthorName', u'Nguyen Ngoc Dai'),
+         StringStruct(u'AuthorName', u'Dang Ngoc Khieu'),
          StringStruct(u'ReleaseDate', u'2026-10-10'),
         ])
       ]
